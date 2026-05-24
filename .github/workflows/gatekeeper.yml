@@ -1,0 +1,58 @@
+name: 🤖 GateKeeper Release Gate
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'flags.json'
+      - 'src/**'
+      - '.github/workflows/gatekeeper.yml'
+
+permissions:
+  contents: read
+  pull-requests: write
+  statuses: write
+
+jobs:
+  gatekeeper:
+    name: 🤖 GateKeeper Assessment
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install GateKeeper dependencies
+        run: npm ci
+
+      - name: 🤖 Run GateKeeper Assessment
+        id: gatekeeper
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_BRANCH: ${{ github.head_ref }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          FLAGS_JSON_PATH: ./flags.json
+          GATEKEEPER_STRICT: 'false'
+          GATEKEEPER_DRY_RUN: 'false'
+        run: node src/index.js
+
+      - name: GateKeeper Result
+        if: always()
+        run: |
+          echo "GateKeeper assessment complete."
+          echo "Exit code: $?"

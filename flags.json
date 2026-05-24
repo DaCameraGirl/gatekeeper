@@ -1,0 +1,74 @@
+{
+  "release": {
+    "feature": "payment-v2",
+    "version": "2.1.0",
+    "description": "Upgraded payment processing with Stripe v3 integration and 3DS support",
+    "owner": "payments-team",
+    "jiraTicket": "PAY-2847",
+    "createdAt": "2024-01-15T09:00:00Z",
+    "lastModified": "2024-03-14T16:30:00Z",
+    "targetDate": "2024-04-01T00:00:00Z"
+  },
+  "flags": {
+    "killSwitch": false,
+    "enabled": true,
+    "rolloutPercentage": 25,
+    "maxRolloutPercentage": 100,
+    "environments": {
+      "development": {
+        "enabled": true,
+        "validatedAt": "2024-02-20T14:00:00Z",
+        "validatedBy": "dev-bot"
+      },
+      "staging": {
+        "enabled": true,
+        "validatedAt": "2024-03-14T10:00:00Z",
+        "validatedBy": "qa-team"
+      },
+      "production": {
+        "enabled": false,
+        "validatedAt": null
+      }
+    }
+  },
+  "quality": {
+    "testCoverage": 87.5,
+    "minimumCoverageThreshold": 80.0,
+    "errorRatePercent": 0.3,
+    "maximumErrorRatePercent": 1.0,
+    "canary": {
+      "active": true,
+      "healthy": true,
+      "healthScore": 98.5,
+      "trafficPercentage": 5,
+      "startedAt": "2024-03-14T08:00:00Z",
+      "errorsBefore": 0.8,
+      "errorsAfter": 0.3
+    }
+  },
+  "risk": {
+    "blastRadius": "medium",
+    "estimatedUsersAffected": 50000,
+    "totalUserBase": 2000000,
+    "criticalPath": false,
+    "dataPrivacy": false,
+    "financialImpact": true,
+    "hasRollbackPlan": true,
+    "rollbackTimeMinutes": 5,
+    "rollbackProcedure": "Feature flag disable + Stripe webhook cache clear + redeploy previous container"
+  },
+  "dependencies": {
+    "lastAuditDate": "2024-03-13T00:00:00Z",
+    "auditTool": "npm audit",
+    "criticalVulnerabilities": 0,
+    "highVulnerabilities": 1,
+    "mediumVulnerabilities": 3,
+    "lowVulnerabilities": 7,
+    "packages": [
+      "stripe@14.0.0",
+      "express@4.18.2",
+      "jsonwebtoken@9.0.2",
+      "axios@1.6.0"
+    ]
+  }
+}
