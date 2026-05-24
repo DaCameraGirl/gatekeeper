@@ -6,6 +6,10 @@
 
 import { loadFlags, calculateStatus } from '../utils.js';
 import { runAllGates } from '../gates/index.js';
+import {
+  loadMemory, saveMemory, rememberFact, rememberProject,
+  setUserInfo, forgetFact, clearChatHistory, buildMemoryContext
+} from '../memory/store.js';
 
 const GITHUB_API = 'https://api.github.com';
 
@@ -272,6 +276,52 @@ async function tool_slack_list_channels({ limit = 20 }) {
   };
 }
 
+// ─── Memory Tools ─────────────────────────────────────────────────────────────
+
+async function tool_remember({ type, content, topic = 'general', user_info, project }) {
+  const memory = loadMemory();
+
+  if (type === 'user_info' && user_info) {
+    setUserInfo(memory, user_info);
+    return { success: true, message: `✅ Got it — I'll remember that.`, saved: user_info };
+  }
+  if (type === 'project' && project) {
+    rememberProject(memory, project);
+    return { success: true, message: `✅ Project "${project.name}" saved to memory.`, saved: project };
+  }
+  rememberFact(memory, content, topic);
+  return { success: true, message: `✅ Remembered: "${content}"`, topic };
+}
+
+async function tool_recall_memory({ filter } = {}) {
+  const memory = loadMemory();
+  let facts = memory.facts || [];
+  if (filter) {
+    facts = facts.filter(f =>
+      f.topic?.toLowerCase().includes(filter.toLowerCase()) ||
+      f.content?.toLowerCase().includes(filter.toLowerCase())
+    );
+  }
+  return {
+    success: true,
+    user: memory.user,
+    projects: memory.projects || [],
+    facts,
+    lastSeen: memory.lastSeen,
+  };
+}
+
+async function tool_forget({ topic }) {
+  const memory = loadMemory();
+  forgetFact(memory, topic);
+  return { success: true, message: `✅ Forgotten anything related to "${topic}".` };
+}
+
+async function tool_clear_chat_history() {
+  clearChatHistory();
+  return { success: true, message: '✅ Chat history cleared. Fresh start.' };
+}
+
 // ─── Web Search ───────────────────────────────────────────────────────────────
 
 async function tool_web_search({ query, max_results = 5 }) {
@@ -377,6 +427,10 @@ const TOOL_MAP = {
   jira_update_ticket:              tool_jira_update_ticket,
   slack_send_message:              tool_slack_send_message,
   slack_list_channels:             tool_slack_list_channels,
+  remember:                        tool_remember,
+  recall_memory:                   tool_recall_memory,
+  forget:                          tool_forget,
+  clear_chat_history:              tool_clear_chat_history,
   web_search:                      tool_web_search,
   run_release_gate:                tool_run_release_gate,
   generate_github_actions_workflow: tool_generate_github_actions_workflow,

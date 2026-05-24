@@ -9,6 +9,7 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { TOOLS } from './src/tools/definitions.js';
 import { executeTool } from './src/tools/executor.js';
+import { loadMemory, loadChatHistory, saveChatHistory, buildMemoryContext } from './src/memory/store.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -51,7 +52,7 @@ You sign off as GateKeeper. You are confident, precise, and get things done.`;
  * Streams progress to the client via SSE as tools execute,
  * then streams the final text response.
  */
-async function runAgentLoop(messages, res) {
+async function runAgentLoop(messages, res, memoryContext = '') {
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
   const agentMessages = [...messages];
 
@@ -64,7 +65,7 @@ async function runAgentLoop(messages, res) {
     const response = await client.messages.create({
       model: 'claude-sonnet-4-6',
       max_tokens: 4096,
-      system: SYSTEM_PROMPT,
+      system: SYSTEM_PROMPT + memoryContext,
       tools: TOOLS,
       messages: agentMessages,
     });
@@ -150,6 +151,10 @@ async function runAgentLoop(messages, res) {
 
 function formatToolLabel(name, input) {
   const labels = {
+    remember:                         `Saving to memory: "${input.content?.slice(0,40)}"`,
+    recall_memory:                    `Recalling memory...`,
+    forget:                           `Forgetting "${input.topic}"`,
+    clear_chat_history:               `Clearing chat history`,
     web_search:                       `Searching the web for "${input.query}"`,
     github_create_issue:              `Creating GitHub issue: "${input.title}"`,
     github_list_issues:               `Fetching issues from ${input.repo}`,
@@ -172,6 +177,23 @@ function formatToolLabel(name, input) {
 
 // ─── Routes ───────────────────────────────────────────────────────────────────
 
+// ─── Memory API ───────────────────────────────────────────────────────────────
+
+app.get('/api/memory', (req, res) => {
+  res.json(loadMemory());
+});
+
+app.get('/api/history', (req, res) => {
+  res.json(loadChatHistory());
+});
+
+app.delete('/api/history', (req, res) => {
+  saveChatHistory([]);
+  res.json({ success: true });
+});
+
+// ─── Chat API ─────────────────────────────────────────────────────────────────
+
 app.post('/api/chat', async (req, res) => {
   const { messages } = req.body;
 
@@ -183,12 +205,18 @@ app.post('/api/chat', async (req, res) => {
     return res.status(500).json({ error: 'ANTHROPIC_API_KEY not set in .env' });
   }
 
+  // Persist conversation history
+  saveChatHistory(messages);
+
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
 
   try {
-    await runAgentLoop(messages, res);
+    // Inject memory into system prompt
+    const memory = loadMemory();
+    const memoryContext = buildMemoryContext(memory);
+    await runAgentLoop(messages, res, memoryContext);
   } catch (err) {
     console.error('Agent loop error:', err.message);
     res.write(`data: ${JSON.stringify({ type: 'error', text: `❌ ${err.message}` })}\n\n`);

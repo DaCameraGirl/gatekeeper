@@ -178,6 +178,74 @@ export const TOOLS = [
     },
   },
 
+  // ── Memory ───────────────────────────────────────────────────────────────────
+
+  {
+    name: 'remember',
+    description: 'Save something important to long-term memory. Use when the user shares their name, preferences, a project they work on, or says "remember this". This persists across ALL future conversations.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        type: { type: 'string', enum: ['fact', 'project', 'user_info', 'preference'], description: 'What kind of thing to remember' },
+        content: { type: 'string', description: 'The thing to remember — be specific and complete' },
+        topic: { type: 'string', description: 'Short topic label e.g. "deployment", "preferences", "project"' },
+        user_info: {
+          type: 'object',
+          description: 'If type=user_info, structured user details',
+          properties: {
+            name: { type: 'string' },
+            role: { type: 'string' },
+          },
+        },
+        project: {
+          type: 'object',
+          description: 'If type=project, project details',
+          properties: {
+            name: { type: 'string' },
+            repo: { type: 'string' },
+            stack: { type: 'string' },
+            notes: { type: 'string' },
+          },
+        },
+      },
+      required: ['type', 'content'],
+    },
+  },
+
+  {
+    name: 'recall_memory',
+    description: 'Recall everything GateKeeper remembers about the user and their projects. Use when the user asks what you remember, or when context from past conversations would help.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        filter: { type: 'string', description: 'Optional topic to filter memories by' },
+      },
+      required: [],
+    },
+  },
+
+  {
+    name: 'forget',
+    description: 'Delete something from memory that the user wants forgotten.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        topic: { type: 'string', description: 'Topic or keyword of what to forget' },
+      },
+      required: ['topic'],
+    },
+  },
+
+  {
+    name: 'clear_chat_history',
+    description: 'Clear the conversation history so GateKeeper starts fresh. Use when the user says "start over", "new conversation", or "forget our chat".',
+    input_schema: {
+      type: 'object',
+      properties: {},
+      required: [],
+    },
+  },
+
   // ── Web Search ───────────────────────────────────────────────────────────────
 
   {

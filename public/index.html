@@ -438,6 +438,7 @@
     <div class="header-badges">
       <span class="badge badge-online">● Online</span>
       <span class="badge badge-claude">Claude AI</span>
+      <button onclick="clearHistory()" style="background:none;border:1px solid #1e3050;color:#4a6fa5;padding:4px 10px;border-radius:20px;font-size:0.7rem;cursor:pointer;font-weight:600;" title="Clear chat history">🗑 Clear</button>
     </div>
   </header>
 
@@ -483,8 +484,34 @@
     const sendBtn    = document.getElementById('send');
     const welcome    = document.getElementById('welcome');
 
-    let history = []; // Full conversation history
+    let history = [];
     let streaming = false;
+
+    // Load chat history on page open
+    async function loadHistory() {
+      try {
+        const res = await fetch('/api/history');
+        const saved = await res.json();
+        if (saved && saved.length > 0) {
+          history = saved;
+          welcome.style.display = 'none';
+          for (const msg of saved) {
+            addMessage(msg.role, msg.content);
+          }
+          scrollBottom();
+        }
+      } catch {}
+    }
+
+    async function clearHistory() {
+      await fetch('/api/history', { method: 'DELETE' });
+      history = [];
+      messagesEl.innerHTML = '';
+      messagesEl.appendChild(welcome);
+      welcome.style.display = 'flex';
+    }
+
+    loadHistory();
 
     // Auto-resize textarea
     inputEl.addEventListener('input', () => {
