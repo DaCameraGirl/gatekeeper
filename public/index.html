@@ -389,6 +389,38 @@
     .verdict-blocked { color: #f87171; font-weight: 700; }
     .verdict-caution { color: #fbbf24; font-weight: 700; }
     .verdict-cleared { color: #34d399; font-weight: 700; }
+
+    /* ── Tool activity ── */
+    .tool-event {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.78rem;
+      color: #4a6fa5;
+      padding: 4px 0;
+      animation: fadeUp 0.2s ease;
+    }
+    .tool-event .spinner {
+      width: 12px; height: 12px;
+      border: 2px solid #1e3050;
+      border-top-color: #3b82f6;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      flex-shrink: 0;
+    }
+    .tool-event.done { color: #22c55e; }
+    .tool-event.done .spinner { display: none; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .tool-strip {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      padding: 8px 12px;
+      background: #0d1117;
+      border: 1px solid #1e2d40;
+      border-radius: 8px;
+      margin-bottom: 8px;
+    }
   </style>
 </head>
 <body>
@@ -550,36 +582,81 @@
 
         if (!resp.ok) throw new Error(`Server error: ${resp.status}`);
 
-        // Remove typing indicator, create real bubble
+        // Remove typing indicator, set up response area
         typingMsg.remove();
-        const bubble = addMessage('assistant', '');
+
+        let bubble = null;
+        let toolStrip = null;
         let fullText = '';
 
         const reader = resp.body.getReader();
         const decoder = new TextDecoder();
+        let buffer = '';
 
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
 
-          const chunk = decoder.decode(value);
-          const lines = chunk.split('\n');
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop(); // Keep incomplete line
 
           for (const line of lines) {
             if (!line.startsWith('data: ')) continue;
-            const data = line.slice(6);
+            const data = line.slice(6).trim();
             if (data === '[DONE]') break;
 
             try {
               const parsed = JSON.parse(data);
-              if (parsed.error) throw new Error(parsed.error);
-              if (parsed.text) {
+
+              if (parsed.type === 'tool_start') {
+                if (!toolStrip) {
+                  // Create tool activity strip inside a GK message
+                  const msg = document.createElement('div');
+                  msg.className = 'msg assistant';
+                  const av = document.createElement('div');
+                  av.className = 'msg-avatar';
+                  av.innerHTML = `<img src="/assets/gatekeeper.svg" alt="GK"/>`;
+                  toolStrip = document.createElement('div');
+                  toolStrip.className = 'tool-strip';
+                  msg.appendChild(av);
+                  msg.appendChild(toolStrip);
+                  messagesEl.appendChild(msg);
+                }
+                const ev = document.createElement('div');
+                ev.className = 'tool-event';
+                ev.id = `tool-${parsed.tool}`;
+                ev.innerHTML = `<div class="spinner"></div><span>⚙️ ${parsed.label}</span>`;
+                toolStrip.appendChild(ev);
+                scrollBottom();
+              }
+
+              else if (parsed.type === 'tool_done') {
+                const ev = document.getElementById(`tool-${parsed.tool}`);
+                if (ev) {
+                  ev.className = 'tool-event done';
+                  ev.innerHTML = `<span>${parsed.success ? '✅' : '❌'} ${parsed.summary}</span>`;
+                }
+                scrollBottom();
+              }
+
+              else if (parsed.type === 'text' || parsed.text) {
+                const txt = parsed.text || '';
+                if (!bubble) bubble = addMessage('assistant', '');
+                fullText += txt;
+                bubble.innerHTML = renderMarkdown(fullText);
+                scrollBottom();
+              }
+
+              else if (parsed.type === 'error') {
+                if (!bubble) bubble = addMessage('assistant', '');
                 fullText += parsed.text;
                 bubble.innerHTML = renderMarkdown(fullText);
                 scrollBottom();
               }
+
             } catch (e) {
-              if (e.message !== 'Unexpected end of JSON input') console.warn(e);
+              // ignore parse errors on incomplete chunks
             }
           }
         }
