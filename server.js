@@ -150,6 +150,7 @@ async function runAgentLoop(messages, res) {
 
 function formatToolLabel(name, input) {
   const labels = {
+    web_search:                       `Searching the web for "${input.query}"`,
     github_create_issue:              `Creating GitHub issue: "${input.title}"`,
     github_list_issues:               `Fetching issues from ${input.repo}`,
     github_get_pr_status:             `Checking PR #${input.pr_number} in ${input.repo}`,
@@ -201,6 +202,7 @@ app.listen(PORT, () => {
   console.log(`   GitHub:  ${process.env.GITHUB_TOKEN ? '✅ Connected' : '⚠️  No GITHUB_TOKEN'}`);
   console.log(`   Jira:    ${process.env.JIRA_API_TOKEN ? '✅ Connected' : '⚠️  No JIRA_API_TOKEN'}`);
   console.log(`   Slack:   ${process.env.SLACK_BOT_TOKEN ? '✅ Connected' : '⚠️  No SLACK_BOT_TOKEN'}`);
-  console.log(`   Claude:  ${process.env.ANTHROPIC_API_KEY ? '✅ Ready' : '❌ No ANTHROPIC_API_KEY — set this first'}`);
+  console.log(`   Web:     ${process.env.TAVILY_API_KEY ? '✅ Search enabled' : '⚠️  No TAVILY_API_KEY (free at tavily.com)'}
+   Claude:  ${process.env.ANTHROPIC_API_KEY ? '✅ Ready' : '❌ No ANTHROPIC_API_KEY — set this first'}`);
   console.log('');
 });

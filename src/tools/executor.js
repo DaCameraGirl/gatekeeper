@@ -272,6 +272,40 @@ async function tool_slack_list_channels({ limit = 20 }) {
   };
 }
 
+// ─── Web Search ───────────────────────────────────────────────────────────────
+
+async function tool_web_search({ query, max_results = 5 }) {
+  const apiKey = process.env.TAVILY_API_KEY;
+  if (!apiKey) throw new Error('TAVILY_API_KEY not set in .env — get a free key at tavily.com');
+
+  const res = await fetch('https://api.tavily.com/search', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      api_key: apiKey,
+      query,
+      max_results,
+      search_depth: 'basic',
+      include_answer: true,
+    }),
+  });
+
+  if (!res.ok) throw new Error(`Tavily search failed: ${res.status}`);
+  const data = await res.json();
+
+  return {
+    success: true,
+    query,
+    answer: data.answer ?? null,
+    results: (data.results ?? []).map(r => ({
+      title: r.title,
+      url: r.url,
+      content: r.content?.slice(0, 400),
+      published: r.published_date ?? null,
+    })),
+  };
+}
+
 // ─── Release Gate Tool ────────────────────────────────────────────────────────
 
 async function tool_run_release_gate({ flags_json }) {
@@ -343,6 +377,7 @@ const TOOL_MAP = {
   jira_update_ticket:              tool_jira_update_ticket,
   slack_send_message:              tool_slack_send_message,
   slack_list_channels:             tool_slack_list_channels,
+  web_search:                      tool_web_search,
   run_release_gate:                tool_run_release_gate,
   generate_github_actions_workflow: tool_generate_github_actions_workflow,
   generate_dockerfile:             tool_generate_dockerfile,

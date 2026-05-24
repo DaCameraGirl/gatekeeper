@@ -178,6 +178,21 @@ export const TOOLS = [
     },
   },
 
+  // ── Web Search ───────────────────────────────────────────────────────────────
+
+  {
+    name: 'web_search',
+    description: 'Search the web for current information — docs, CVEs, outages, pricing, release notes, anything. Use this whenever the user asks about something that requires up-to-date or real-world information.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'The search query' },
+        max_results: { type: 'number', description: 'Number of results to return (default 5)' },
+      },
+      required: ['query'],
+    },
+  },
+
   // ── DevOps Utilities ─────────────────────────────────────────────────────────
 
   {
