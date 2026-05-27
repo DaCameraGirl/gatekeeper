@@ -7,7 +7,7 @@
 ### Autonomous AI DevOps Release Gate Agent
 
 *Every release passes through me.*
-
+ 
 [![GitHub Actions](https://img.shields.io/badge/GitHub_Actions-trigger-2088FF?logo=githubactions&logoColor=white)](https://github.com/features/actions)
 [![Claude](https://img.shields.io/badge/Claude_AI-risk_brain-orange?logo=anthropic)](https://anthropic.com)
 [![DeepSeek](https://img.shields.io/badge/DeepSeek-structured_tasks-blue)](https://deepseek.com)
