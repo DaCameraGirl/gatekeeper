@@ -71,9 +71,26 @@ You sign off as GateKeeper 🤖.`;
  * Streams progress to the client via SSE as tools execute,
  * then streams the final text response.
  */
+function pickModel(messages) {
+  const last = messages.filter(m => m.role === 'user').slice(-1)[0]?.content || '';
+  const text = (typeof last === 'string' ? last : JSON.stringify(last)).toLowerCase();
+  const heavy = [
+    'stress test', 'test script', 'run test', 'write a test', 'write test',
+    'read the file', 'read all', 'read the route', 'read the backend',
+    'write a script', 'node script', 'run it', 'execute',
+    'analyze', 'analyse', 'review all', 'go through',
+    'scrape', 'firecrawl', 'deep search',
+    'release gate', 'run gates', 'full check',
+    'github actions', 'dockerfile', 'kubernetes',
+  ];
+  const isHeavy = heavy.some(kw => text.includes(kw));
+  return isHeavy ? 'claude-sonnet-4-6' : 'claude-haiku-4-5-20251001';
+}
+
 async function runAgentLoop(messages, res, memoryContext = '') {
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, timeout: 120_000, maxRetries: 2 });
   const agentMessages = [...messages];
+  const model = pickModel(messages);
 
   let iterations = 0;
   const MAX_ITERATIONS = 25;
@@ -89,8 +106,8 @@ async function runAgentLoop(messages, res, memoryContext = '') {
     let currentBlock    = null;
 
     const stream = await client.messages.create({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 8096,
+      model,
+      max_tokens: model === 'claude-sonnet-4-6' ? 8096 : 4096,
       system: SYSTEM_PROMPT + memoryContext,
       tools: TOOLS,
       messages: agentMessages,
