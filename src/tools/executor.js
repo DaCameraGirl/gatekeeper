@@ -4,12 +4,27 @@
  * Every tool here does REAL work — API calls, file generation, gate runs.
  */
 
+import { readFileSync, writeFileSync, existsSync, readdirSync, statSync, mkdirSync } from 'fs';
+import { exec } from 'child_process';
+import { resolve, join, dirname, relative, isAbsolute, extname } from 'path';
+import { promisify } from 'util';
 import { loadFlags, calculateStatus } from '../utils.js';
 import { runAllGates } from '../gates/index.js';
+import { validateFlagsSchema, preprocessContext } from '../brain/deepseek.js';
 import {
   loadMemory, saveMemory, rememberFact, rememberProject,
   setUserInfo, forgetFact, clearChatHistory, buildMemoryContext
 } from '../memory/store.js';
+
+const execAsync = promisify(exec);
+
+// Resolve a file path relative to the project root (where the server was started)
+const PROJECT_ROOT = process.cwd();
+function resolvePath(filePath = '.') {
+  if (!filePath || filePath === '.') return PROJECT_ROOT;
+  if (isAbsolute(filePath)) return filePath;
+  return resolve(PROJECT_ROOT, filePath);
+}
 
 const GITHUB_API = 'https://api.github.com';
 
@@ -129,6 +144,45 @@ async function tool_github_list_workflows({ repo }) {
       branch: r.head_branch,
       created_at: r.created_at,
     })) ?? [],
+  };
+}
+
+async function tool_github_generate_commit_message({ repo, base = 'main', head, raw_diff, style = 'conventional' }) {
+  let diffContent = raw_diff;
+
+  if (!diffContent && repo && head) {
+    const data = await ghFetch(`/repos/${repo}/compare/${base}...${head}`);
+    diffContent = data.files?.map(f =>
+      `--- a/${f.filename}\n+++ b/${f.filename}\n${f.patch ?? '(binary file)'}`
+    ).join('\n') || '(no changes)';
+
+    if (!diffContent || diffContent === '(no changes)') {
+      return { success: true, diff: '(no changes between branches)', instruction: 'No changes found to generate a commit message for.' };
+    }
+  }
+
+  if (!diffContent) {
+    return { success: false, error: 'Provide either raw_diff text or repo + base + head to fetch from GitHub.' };
+  }
+
+  const maxDiffLen = 8000;
+  const truncated = diffContent.length > maxDiffLen;
+  const displayDiff = truncated ? diffContent.slice(0, maxDiffLen) + '\n… [diff truncated]' : diffContent;
+
+  const styleGuide = {
+    conventional: 'Format: type(scope): description\n\nBody (if needed)\n\nFooter (if needed)\nTypes: feat, fix, chore, docs, refactor, test, style, perf, ci, build, revert',
+    simple: 'Short, descriptive. Like: "Add login form validation" or "Fix payment timeout bug"',
+    detailed: 'Subject line + blank line + bullet-point body + optional footers with references',
+  };
+
+  return {
+    success: true,
+    diff: displayDiff,
+    truncated,
+    style,
+    style_guide: styleGuide[style] || styleGuide.conventional,
+    total_files_changed: diffContent.match(/^--- a\//gm)?.length ?? null,
+    instruction: `Here is the git diff. Generate a ${style} commit message based on these changes. Use the style guide provided. Be specific about what changed and why. Sign off as GateKeeper 🤖.`,
   };
 }
 
@@ -356,7 +410,55 @@ async function tool_web_search({ query, max_results = 5 }) {
   };
 }
 
+async function tool_firecrawl_search({ query, max_results = 5, scrape = false }) {
+  const apiKey = process.env.FIRECRAWL_API_KEY;
+  if (!apiKey) throw new Error('FIRECRAWL_API_KEY not set in .env');
+
+  const body = { query, limit: Math.min(max_results, 10) };
+  if (scrape) body.scrapeOptions = { formats: ['markdown'] };
+
+  const res = await fetch('https://api.firecrawl.dev/v1/search', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`Firecrawl search failed: ${res.status} ${text.slice(0, 200)}`);
+  }
+  const data = await res.json();
+
+  const results = (data.data ?? []).map(r => ({
+    title: r.metadata?.title ?? r.title ?? '',
+    url: r.url,
+    description: r.metadata?.description ?? r.description ?? '',
+    content: scrape ? r.markdown?.slice(0, 2000) ?? r.content?.slice(0, 2000) : null,
+    published: r.metadata?.publishedDate ?? r.publishedDate ?? null,
+  }));
+
+  return {
+    success: true,
+    query,
+    source: 'Firecrawl',
+    result_count: results.length,
+    results,
+  };
+}
+
 // ─── Release Gate Tool ────────────────────────────────────────────────────────
+//
+// Full three-stage pipeline:
+//   Stage 1 — 9 deterministic policy gates (always runs)
+//   Stage 2 — DeepSeek schema validation + context compression (if key set)
+//   Stage 3 — Return everything to the chat Claude for deep risk reasoning
+//
+// DeepSeek acts as prep cook: validates the schema and compresses the gate
+// context into a tight briefing. The chat Claude then reasons over it with
+// full context rather than raw gate data.
 
 async function tool_run_release_gate({ flags_json }) {
   let flags;
@@ -366,13 +468,13 @@ async function tool_run_release_gate({ flags_json }) {
     return { success: false, error: `Invalid JSON: ${e.message}` };
   }
 
-  // Suppress console output during gate run
+  // ── Stage 1: Run all 9 policy gates ────────────────────────────────────────
   const origLog = console.log;
   console.log = () => {};
   const { gateResults, summary } = await runAllGates(flags);
   console.log = origLog;
 
-  return {
+  const baseResult = {
     success: true,
     status: summary.status,
     score: summary.score,
@@ -382,7 +484,323 @@ async function tool_run_release_gate({ flags_json }) {
     blockers: summary.blockers.map(b => ({ gate: b.name, message: b.message, fix: b.remediation })),
     warnings_detail: summary.warnings.map(w => ({ gate: w.name, message: w.message })),
     gate_results: gateResults.map(g => ({ id: g.id, name: g.name, status: g.status, message: g.message })),
+    deepseek_used: false,
   };
+
+  // ── Stage 2: DeepSeek enrichment (if key is available) ─────────────────────
+  if (!process.env.DEEPSEEK_API_KEY) {
+    baseResult.deepseek_note = 'DeepSeek schema validation and context analysis skipped — DEEPSEEK_API_KEY not set.';
+    return baseResult;
+  }
+
+  let schemaValidation = null;
+  let preAnalysis = null;
+
+  try {
+    // Run both DeepSeek calls in parallel — they're independent
+    [schemaValidation, preAnalysis] = await Promise.all([
+      validateFlagsSchema(flags),
+      preprocessContext(flags, gateResults, summary),
+    ]);
+  } catch (err) {
+    // Degrade gracefully — gate results still valid without DeepSeek
+    baseResult.deepseek_note = `DeepSeek enrichment failed: ${err.message}. Gate results above are still valid.`;
+    return baseResult;
+  }
+
+  // ── Stage 3: Return enriched result to chat Claude ─────────────────────────
+  return {
+    ...baseResult,
+    deepseek_used: true,
+
+    // Schema health — surface before risk reasoning
+    schema: {
+      valid: schemaValidation.valid,
+      issues: schemaValidation.issues,        // e.g. ["rollout 100% but no canary set"]
+      summary: schemaValidation.summary,
+    },
+
+    // Compressed, structured briefing — gives chat Claude much better context
+    // to reason over than raw gate data alone
+    pre_analysis: preAnalysis,
+
+    // Instruction for chat Claude on how to use this data
+    _instruction: `You now have three layers of release intelligence:
+1. gate_results — 9 deterministic policy checks (pass/warn/fail)
+2. schema — DeepSeek's structural validation of the flags.json
+3. pre_analysis — DeepSeek's compressed risk briefing identifying cross-cutting patterns
+
+Use all three layers in your assessment. The pre_analysis is your starting point — it already identifies compounding risks and patterns the individual gates may have missed. Build your risk verdict on top of it. Be specific: reference actual flag values, gate names, and field names from the data.`,
+  };
+}
+
+// ─── File Access Tools ────────────────────────────────────────────────────────
+
+const MAX_FILE_SIZE = 512 * 1024; // 512 KB — refuse to read huge files in one shot
+
+async function tool_read_file({ path: filePath, start_line, end_line }) {
+  const absPath = resolvePath(filePath);
+
+  if (!existsSync(absPath)) throw new Error(`File not found: ${filePath}`);
+
+  const stat = statSync(absPath);
+  if (stat.isDirectory()) throw new Error(`"${filePath}" is a directory — use list_directory instead.`);
+  if (stat.size > MAX_FILE_SIZE) {
+    throw new Error(
+      `File is ${(stat.size / 1024).toFixed(0)} KB — too large to read all at once. ` +
+      `Use start_line and end_line to read a specific section.`
+    );
+  }
+
+  const raw = readFileSync(absPath, 'utf-8');
+  const lines = raw.split('\n');
+  const totalLines = lines.length;
+
+  if (start_line !== undefined || end_line !== undefined) {
+    const from = Math.max((start_line ?? 1) - 1, 0);
+    const to   = Math.min(end_line ?? totalLines, totalLines);
+    const slice = lines.slice(from, to);
+    return {
+      success: true,
+      path: filePath,
+      content: slice.map((l, i) => `${from + i + 1}\t${l}`).join('\n'),
+      total_lines: totalLines,
+      shown: `lines ${from + 1}–${to}`,
+    };
+  }
+
+  // Cap full-file reads at 150 lines to control token cost
+  const MAX_LINES = 150;
+  const truncated = totalLines > MAX_LINES;
+  const shown = truncated ? lines.slice(0, MAX_LINES) : lines;
+  return {
+    success: true,
+    path: filePath,
+    content: shown.map((l, i) => `${i + 1}\t${l}`).join('\n'),
+    total_lines: totalLines,
+    shown: truncated ? `lines 1–${MAX_LINES} (use start_line/end_line for more)` : `all ${totalLines} lines`,
+    size_bytes: stat.size,
+  };
+}
+
+async function tool_write_file({ path: filePath, content, mode = 'overwrite' }) {
+  const absPath = resolvePath(filePath);
+
+  // Ensure parent directory exists
+  const parentDir = dirname(absPath);
+  if (!existsSync(parentDir)) mkdirSync(parentDir, { recursive: true });
+
+  if (mode === 'append') {
+    const existing = existsSync(absPath) ? readFileSync(absPath, 'utf-8') : '';
+    const separator = existing && !existing.endsWith('\n') ? '\n' : '';
+    writeFileSync(absPath, existing + separator + content, 'utf-8');
+  } else {
+    writeFileSync(absPath, content, 'utf-8');
+  }
+
+  const stat = statSync(absPath);
+  return {
+    success: true,
+    path: filePath,
+    mode,
+    size_bytes: stat.size,
+    message: `✅ ${mode === 'append' ? 'Appended to' : 'Wrote'} ${filePath} (${stat.size} bytes)`,
+  };
+}
+
+async function tool_list_directory({ path: dirPath = '.', recursive = false, show_hidden = false }) {
+  const absPath = resolvePath(dirPath);
+
+  if (!existsSync(absPath)) throw new Error(`Path not found: ${dirPath}`);
+  const stat = statSync(absPath);
+  if (!stat.isFile() && !stat.isDirectory()) throw new Error(`Cannot list: ${dirPath}`);
+  if (stat.isFile()) throw new Error(`"${dirPath}" is a file — use read_file instead.`);
+
+  const SKIP = new Set(['node_modules', '.git', 'dist', 'build', '.next', 'coverage']);
+
+  function listDir(dir, depth = 0) {
+    if (depth > 3) return [];
+    let entries;
+    try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return []; }
+
+    const results = [];
+    for (const entry of entries) {
+      if (!show_hidden && entry.name.startsWith('.')) continue;
+      if (SKIP.has(entry.name)) continue;
+
+      const fullPath = join(dir, entry.name);
+      const relPath  = relative(absPath, fullPath).replace(/\\/g, '/');
+
+      if (entry.isDirectory()) {
+        results.push({ type: 'dir', name: relPath + '/' });
+        if (recursive) results.push(...listDir(fullPath, depth + 1));
+      } else {
+        try {
+          const s = statSync(fullPath);
+          results.push({
+            type: 'file',
+            name: relPath,
+            size: s.size,
+            ext: extname(entry.name),
+            modified: s.mtime.toISOString().slice(0, 10),
+          });
+        } catch { /* skip unreadable files */ }
+      }
+    }
+    return results;
+  }
+
+  const entries = listDir(absPath);
+  const dirs  = entries.filter(e => e.type === 'dir');
+  const files = entries.filter(e => e.type === 'file');
+
+  return {
+    success: true,
+    path: dirPath,
+    entry_count: entries.length,
+    dirs: dirs.map(d => d.name),
+    files: files.map(f => `${f.name} (${f.size}B)`),
+    entries,
+  };
+}
+
+const TEXT_EXTS = new Set([
+  '.js', '.ts', '.jsx', '.tsx', '.mjs', '.cjs',
+  '.json', '.yml', '.yaml', '.toml', '.env', '.env.example',
+  '.md', '.txt', '.sh', '.bat', '.ps1',
+  '.html', '.css', '.scss', '.svg',
+  '.py', '.rb', '.go', '.rs', '.java', '.cs',
+  '.sql', '.graphql', '.proto',
+  '.dockerfile', '.gitignore', '.npmignore',
+  '', // no extension — might be a script
+]);
+
+async function tool_search_files({ pattern, path: searchPath = '.', file_pattern, max_results = 20 }) {
+  const absPath = resolvePath(searchPath);
+  if (!existsSync(absPath)) throw new Error(`Path not found: ${searchPath}`);
+
+  let regex;
+  try { regex = new RegExp(pattern, 'i'); }
+  catch { throw new Error(`Invalid regex pattern: ${pattern}`); }
+
+  const fileRegex = file_pattern
+    ? new RegExp('^' + file_pattern.replace(/\./g, '\\.').replace(/\*/g, '.*') + '$', 'i')
+    : null;
+
+  const SKIP = new Set(['node_modules', '.git', 'dist', 'build', '.next', 'coverage']);
+  const results = [];
+
+  function searchDir(dir) {
+    if (results.length >= max_results) return;
+    let entries;
+    try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return; }
+
+    for (const entry of entries) {
+      if (results.length >= max_results) break;
+      if (SKIP.has(entry.name)) continue;
+
+      const fullPath = join(dir, entry.name);
+
+      if (entry.isDirectory()) {
+        searchDir(fullPath);
+      } else if (entry.isFile()) {
+        const ext = extname(entry.name).toLowerCase();
+        if (!TEXT_EXTS.has(ext)) continue;
+        if (fileRegex && !fileRegex.test(entry.name)) continue;
+
+        let content;
+        try { content = readFileSync(fullPath, 'utf-8'); } catch { continue; }
+
+        const relFile = relative(absPath, fullPath).replace(/\\/g, '/');
+        const lines = content.split('\n');
+
+        for (let i = 0; i < lines.length && results.length < max_results; i++) {
+          if (regex.test(lines[i])) {
+            results.push({
+              file: relFile,
+              line: i + 1,
+              content: lines[i].trim().slice(0, 200),
+            });
+          }
+        }
+      }
+    }
+  }
+
+  const stat = statSync(absPath);
+  if (stat.isFile()) {
+    const content = readFileSync(absPath, 'utf-8');
+    content.split('\n').forEach((line, i) => {
+      if (results.length < max_results && regex.test(line)) {
+        results.push({ file: searchPath, line: i + 1, content: line.trim().slice(0, 200) });
+      }
+    });
+  } else {
+    searchDir(absPath);
+  }
+
+  return {
+    success: true,
+    pattern,
+    path: searchPath,
+    results,
+    count: results.length,
+    truncated: results.length >= max_results,
+    message: results.length === 0
+      ? `No matches found for "${pattern}"`
+      : `Found ${results.length} match${results.length === 1 ? '' : 'es'}${results.length >= max_results ? ' (more exist — increase max_results)' : ''}`,
+  };
+}
+
+// ─── Terminal Tool ────────────────────────────────────────────────────────────
+
+const MAX_COMMAND_TIMEOUT = 60_000; // 60s hard cap
+const MAX_OUTPUT_CHARS    = 8_000;  // Truncate very long outputs
+
+async function tool_run_terminal_command({ command, working_dir = '.', timeout = 30_000 }) {
+  const cwd = resolvePath(working_dir);
+
+  if (!existsSync(cwd)) throw new Error(`Working directory not found: ${working_dir}`);
+  const stat = statSync(cwd);
+  if (!stat.isDirectory()) throw new Error(`"${working_dir}" is not a directory.`);
+
+  const actualTimeout = Math.min(Math.max(timeout, 1_000), MAX_COMMAND_TIMEOUT);
+
+  try {
+    const { stdout, stderr } = await execAsync(command, {
+      cwd,
+      timeout: actualTimeout,
+      maxBuffer: 2 * 1024 * 1024,
+      windowsHide: true,
+    });
+
+    const combined = [stdout, stderr ? `[stderr]\n${stderr}` : ''].filter(Boolean).join('\n').trimEnd();
+    const truncated = combined.length > MAX_OUTPUT_CHARS;
+
+    return {
+      success: true,
+      command,
+      working_dir: working_dir === '.' ? '(project root)' : working_dir,
+      exit_code: 0,
+      output: truncated ? combined.slice(0, MAX_OUTPUT_CHARS) + '\n… [output truncated]' : combined,
+      truncated,
+      message: `✅ Command finished`,
+    };
+  } catch (err) {
+    const combined = [(err.stdout || ''), err.stderr ? `[stderr]\n${err.stderr}` : ''].filter(Boolean).join('\n').trimEnd();
+    const isTimeout = err.killed || err.signal === 'SIGTERM';
+    return {
+      success: false,
+      command,
+      working_dir: working_dir === '.' ? '(project root)' : working_dir,
+      exit_code: err.code ?? 1,
+      output: combined.slice(0, 4_000) || '(no output)',
+      error: isTimeout ? `Command timed out after ${actualTimeout / 1000}s` : err.message,
+      message: isTimeout
+        ? `⏱ Command timed out after ${actualTimeout / 1000}s`
+        : `❌ Command failed (exit ${err.code ?? 1})`,
+    };
+  }
 }
 
 // ─── DevOps Generation Tools ──────────────────────────────────────────────────
@@ -432,10 +850,17 @@ const TOOL_MAP = {
   forget:                          tool_forget,
   clear_chat_history:              tool_clear_chat_history,
   web_search:                      tool_web_search,
+  firecrawl_search:                tool_firecrawl_search,
   run_release_gate:                tool_run_release_gate,
+  github_generate_commit_message:  tool_github_generate_commit_message,
   generate_github_actions_workflow: tool_generate_github_actions_workflow,
   generate_dockerfile:             tool_generate_dockerfile,
   generate_kubernetes_manifest:    tool_generate_kubernetes_manifest,
+  read_file:                       tool_read_file,
+  write_file:                      tool_write_file,
+  list_directory:                  tool_list_directory,
+  search_files:                    tool_search_files,
+  run_terminal_command:            tool_run_terminal_command,
 };
 
 /**

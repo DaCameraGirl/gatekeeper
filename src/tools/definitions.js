@@ -261,6 +261,22 @@ export const TOOLS = [
     },
   },
 
+  // ── Firecrawl Search ───────────────────────────────────────────────────────────
+
+  {
+    name: 'firecrawl_search',
+    description: 'Deep web search using Firecrawl — scrape, crawl, and extract full page content as clean markdown. Better than Tavily for getting detailed page content, documentation scraping, or extracting structured data from websites. Falls back gracefully if FIRECRAWL_API_KEY is not set.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'The search query' },
+        max_results: { type: 'number', description: 'Number of results to return (default 5, max 10)' },
+        scrape: { type: 'boolean', description: 'If true, scrape full page content for each result. Default false (titles + descriptions only).' },
+      },
+      required: ['query'],
+    },
+  },
+
   // ── DevOps Utilities ─────────────────────────────────────────────────────────
 
   {
@@ -304,6 +320,99 @@ export const TOOLS = [
         manifest_types: { type: 'array', items: { type: 'string' }, description: '["Deployment","Service","Ingress","HPA"]' },
       },
       required: ['app_name', 'image'],
+    },
+  },
+
+  // ── File Access ───────────────────────────────────────────────────────────────
+
+  {
+    name: 'read_file',
+    description: 'Read the contents of a file. Use this to inspect code, configs, logs, or any text file. Supports line ranges for large files.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'File path — relative to project root or absolute. e.g. "server.js", "src/tools/executor.js", "C:/Users/enter/project/app.py"' },
+        start_line: { type: 'number', description: 'First line to read (1-based). Omit to read from the beginning.' },
+        end_line: { type: 'number', description: 'Last line to read (inclusive). Omit to read to the end.' },
+      },
+      required: ['path'],
+    },
+  },
+
+  {
+    name: 'write_file',
+    description: 'Write content to a file — create it or overwrite it. Use this to edit code, update configs, create new files. Use mode=append to add to the end without overwriting.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'File path — relative to project root or absolute.' },
+        content: { type: 'string', description: 'The full content to write to the file.' },
+        mode: { type: 'string', enum: ['overwrite', 'append'], description: '"overwrite" replaces the file (default). "append" adds content to the end.' },
+      },
+      required: ['path', 'content'],
+    },
+  },
+
+  {
+    name: 'list_directory',
+    description: 'List files and subdirectories at a given path. Use this to explore project structure before reading files. node_modules and .git are always excluded.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'Directory path — relative to project root or absolute. Defaults to "." (project root).' },
+        recursive: { type: 'boolean', description: 'If true, recurse into subdirectories (max depth 3). Default false.' },
+        show_hidden: { type: 'boolean', description: 'If true, include files and dirs starting with ".". Default false.' },
+      },
+      required: [],
+    },
+  },
+
+  {
+    name: 'search_files',
+    description: 'Search for a text pattern across files in a directory. Like grep — finds matching lines with file path and line number. Use this to find function definitions, config values, or any text in a codebase.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        pattern: { type: 'string', description: 'Text or regex pattern to search for e.g. "async function", "ANTHROPIC_API_KEY", "import.*express"' },
+        path: { type: 'string', description: 'Directory or file to search in. Defaults to "." (project root).' },
+        file_pattern: { type: 'string', description: 'Filter which files to search e.g. "*.js", "*.yml", "*.json"' },
+        max_results: { type: 'number', description: 'Max matching lines to return (default 20)' },
+      },
+      required: ['pattern'],
+    },
+  },
+
+  // ── GitHub Commit Message Generator ───────────────────────────────────────────
+
+  {
+    name: 'github_generate_commit_message',
+    description: 'Fetch a git diff (from GitHub compare or raw diff text) and generate a conventional commit message. Use this when the user wants a commit message for their changes — pass either a repo + branch pair to fetch from GitHub, or paste raw diff text directly.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        repo: { type: 'string', description: 'Full repo name e.g. DaCameraGirl/gatekeeper — required if not providing raw_diff' },
+        base: { type: 'string', description: 'Base branch/ref to compare against e.g. main, dev, or a commit SHA. Default: main' },
+        head: { type: 'string', description: 'Head branch/ref with the changes e.g. fix-login-bug, my-feature-branch. Required if repo is set.' },
+        raw_diff: { type: 'string', description: 'Raw git diff text — use this instead of repo/base/head if you already have the diff content.' },
+        style: { type: 'string', enum: ['conventional', 'simple', 'detailed'], description: 'Commit message style. conventional: "feat(scope): msg". simple: "Add feature". detailed: multi-line with body + footer. Default: conventional.' },
+      },
+      required: [],
+    },
+  },
+
+  // ── Terminal ──────────────────────────────────────────────────────────────────
+
+  {
+    name: 'run_terminal_command',
+    description: 'Execute a shell command and return the output. Use this to run npm scripts, git commands, install packages, run tests, check system state, or any shell operation. Commands run in the project directory by default.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        command: { type: 'string', description: 'The command to run e.g. "npm test", "git log --oneline -5", "node -e \\"console.log(1+1)\\"", "ls -la"' },
+        working_dir: { type: 'string', description: 'Directory to run the command in. Defaults to "." (project root).' },
+        timeout: { type: 'number', description: 'Timeout in milliseconds (default 30000, max 60000).' },
+      },
+      required: ['command'],
     },
   },
 

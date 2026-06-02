@@ -21,7 +21,9 @@
  * Author: GateKeeper 🤖
  */
 
-import { loadFlags }             from './utils.js';
+import { envBool,
+         envString,
+         loadFlags }             from './utils.js';
 import { runAllGates }           from './gates/index.js';
 import { validateFlagsSchema,
          preprocessContext }     from './brain/deepseek.js';
@@ -51,9 +53,9 @@ async function main() {
     repo:    process.env.GITHUB_REPOSITORY ?? 'unknown/unknown',
   };
 
-  const flagsPath = process.env.FLAGS_JSON_PATH ?? './flags.json';
-  const dryRun    = process.env.GATEKEEPER_DRY_RUN === 'true';
-  const strict    = process.env.GATEKEEPER_STRICT  === 'true';
+  const flagsPath = envString('FLAGS_JSON_PATH', './flags.json');
+  const dryRun    = envBool('GATEKEEPER_DRY_RUN', false);
+  const strict    = envBool('GATEKEEPER_STRICT', false);
 
   console.log(`📦 Repository:  ${prContext.repo}`);
   console.log(`🔀 PR:          #${prContext.number} — "${prContext.title}"`);
@@ -74,7 +76,7 @@ async function main() {
     console.log(`  ✅ Loaded: feature="${flags.release?.feature}", version="${flags.release?.version}"`);
   } catch (err) {
     console.error(`  ❌ ${err.message}`);
-    process.exit(1);
+    return 1;
   }
 
   // ── Step 2: Schema validation (DeepSeek) ─────────────────────────────────
@@ -195,11 +197,11 @@ async function main() {
 
   if (shouldFail) {
     console.log(`💥 GateKeeper exiting with code 1 — release is ${summary.status}.`);
-    process.exit(1);
+    return 1;
   }
 
   console.log('✅ GateKeeper exiting cleanly — release check complete.');
-  process.exit(0);
+  return 0;
 }
 
 function statusIcon(status) {
@@ -208,8 +210,10 @@ function statusIcon(status) {
 
 // ─── Run ──────────────────────────────────────────────────────────────────────
 
-main().catch(err => {
+main().then(code => {
+  process.exitCode = code ?? 0;
+}).catch(err => {
   console.error('\n💥 GateKeeper encountered a fatal error:');
   console.error(err);
-  process.exit(1);
+  process.exitCode = 1;
 });

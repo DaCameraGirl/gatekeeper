@@ -4,6 +4,8 @@
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>GateKeeper — DevOps AI Engineer</title>
+  <link rel="icon" type="image/svg+xml" href="/assets/gatekeeper.svg"/>
+  <link rel="shortcut icon" href="/assets/gatekeeper.svg"/>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -390,27 +392,27 @@
     .verdict-caution { color: #fbbf24; font-weight: 700; }
     .verdict-cleared { color: #34d399; font-weight: 700; }
 
+    /* ── Avatar pulse ── */
+    @keyframes avatarBreath {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(59,130,246,0.3), 0 0 12px rgba(59,130,246,0.15); }
+      50%       { box-shadow: 0 0 0 6px rgba(59,130,246,0), 0 0 24px rgba(59,130,246,0.35); }
+    }
+    @keyframes avatarWork {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(59,130,246,0.6), 0 0 16px rgba(59,130,246,0.4); }
+      50%       { box-shadow: 0 0 0 10px rgba(59,130,246,0), 0 0 32px rgba(59,130,246,0.6); }
+    }
+    .avatar-wrap img {
+      animation: avatarBreath 3.5s ease-in-out infinite;
+      transition: all 0.3s ease;
+    }
+    body.gk-working .avatar-wrap img {
+      animation: avatarWork 0.9s ease-in-out infinite;
+      filter: drop-shadow(0 0 8px rgba(59,130,246,0.7));
+    }
+
     /* ── Tool activity ── */
-    .tool-event {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      font-size: 0.78rem;
-      color: #4a6fa5;
-      padding: 4px 0;
-      animation: fadeUp 0.2s ease;
-    }
-    .tool-event .spinner {
-      width: 12px; height: 12px;
-      border: 2px solid #1e3050;
-      border-top-color: #3b82f6;
-      border-radius: 50%;
-      animation: spin 0.7s linear infinite;
-      flex-shrink: 0;
-    }
-    .tool-event.done { color: #22c55e; }
-    .tool-event.done .spinner { display: none; }
     @keyframes spin { to { transform: rotate(360deg); } }
+
     .tool-strip {
       display: flex;
       flex-direction: column;
@@ -420,7 +422,50 @@
       border: 1px solid #1e2d40;
       border-radius: 8px;
       margin-bottom: 8px;
+      overflow: hidden;
+      transition: max-height 0.4s ease, opacity 0.4s ease, padding 0.3s ease;
+      max-height: 600px;
     }
+    .tool-strip.collapsed {
+      max-height: 32px;
+      padding: 4px 12px;
+      cursor: pointer;
+      border-color: #1a2a1a;
+    }
+    .tool-strip.collapsed .tool-event { display: none; }
+    .tool-strip.collapsed .tool-summary { display: flex; }
+    .tool-summary {
+      display: none;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.72rem;
+      color: #22c55e;
+      opacity: 0.7;
+    }
+
+    .tool-event {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.78rem;
+      color: #4a6fa5;
+      padding: 3px 0;
+      animation: fadeUp 0.2s ease;
+    }
+    .tool-event .spinner {
+      width: 10px; height: 10px;
+      border: 2px solid #1e3050;
+      border-top-color: #3b82f6;
+      border-radius: 50%;
+      animation: spin 0.6s linear infinite;
+      flex-shrink: 0;
+    }
+    .tool-event.done {
+      color: #22c55e;
+      font-size: 0.72rem;
+      opacity: 0.6;
+    }
+    .tool-event.done .spinner { display: none; }
   </style>
 </head>
 <body>
@@ -433,7 +478,7 @@
     </div>
     <div class="header-info">
       <h1>GateKeeper</h1>
-      <p>Senior DevOps Engineer · AI-powered · Always on call</p>
+      <p>Elite Engineer · DevOps · All Languages · Ideas · Always on call</p>
     </div>
     <div class="header-badges">
       <span class="badge badge-online">● Online</span>
@@ -448,14 +493,14 @@
     <div id="welcome">
       <img src="/assets/gatekeeper.svg" alt="GateKeeper"/>
       <h2>I'm GateKeeper</h2>
-      <p>Your AI DevOps engineer. Give me a job — release assessments, CI/CD pipelines, deployment configs, incident response. I'll tell you what's ready and what's not.</p>
+      <p>Elite engineer, DevOps expert, original thinker. I write code in any language, read and edit your files, run terminal commands, manage deployments, and generate ideas that actually ship.</p>
       <div class="starter-prompts">
+        <button class="starter" onclick="useStarter(this)">Read my code and suggest improvements</button>
+        <button class="starter" onclick="useStarter(this)">Write me a Python FastAPI service</button>
         <button class="starter" onclick="useStarter(this)">Check if my release is ready</button>
-        <button class="starter" onclick="useStarter(this)">Review my GitHub Actions pipeline</button>
-        <button class="starter" onclick="useStarter(this)">Help me set up a canary deployment</button>
-        <button class="starter" onclick="useStarter(this)">My deployment is failing — help me debug</button>
-        <button class="starter" onclick="useStarter(this)">What's a safe rollout strategy for a payment feature?</button>
-        <button class="starter" onclick="useStarter(this)">Paste my flags.json and assess the risk</button>
+        <button class="starter" onclick="useStarter(this)">Help me debug a failing deployment</button>
+        <button class="starter" onclick="useStarter(this)">Generate an original app idea I can build this weekend</button>
+        <button class="starter" onclick="useStarter(this)">Set up a canary deployment strategy</button>
       </div>
     </div>
   </div>
@@ -466,7 +511,7 @@
       <textarea
         id="input"
         rows="1"
-        placeholder="Give GateKeeper a job — or paste your flags.json for a release assessment…"
+        placeholder="Give GateKeeper a job — write code, edit files, run commands, assess releases, generate ideas…"
       ></textarea>
       <button id="send" onclick="sendMessage()" title="Send">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
@@ -511,7 +556,68 @@
       welcome.style.display = 'flex';
     }
 
-    loadHistory();
+    // ── Morning greeting ──────────────────────────────────────────────────────
+    // GateKeeper speaks first, once per day, when you open the app.
+
+    async function maybeSendMorningGreeting() {
+      const today = new Date().toDateString();
+      const lastGreeting = localStorage.getItem('gk_last_greeting');
+      if (lastGreeting === today) return; // Already greeted today
+
+      // Mark today greeted immediately so double-loads don't fire twice
+      localStorage.setItem('gk_last_greeting', today);
+
+      welcome.style.display = 'none';
+
+      try {
+        const resp = await fetch('/api/greet');
+        if (!resp.ok) return;
+
+        let bubble = null;
+        let fullText = '';
+        const reader = resp.body.getReader();
+        const decoder = new TextDecoder();
+        let buf = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+          const lines = buf.split('\n');
+          buf = lines.pop();
+
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue;
+            const data = line.slice(6).trim();
+            if (data === '[DONE]') break;
+            try {
+              const parsed = JSON.parse(data);
+              if (parsed.type === 'text' || parsed.text) {
+                if (!bubble) bubble = addMessage('assistant', '');
+                fullText += parsed.text || '';
+                bubble.innerHTML = renderMarkdown(fullText);
+                scrollBottom();
+              }
+            } catch {}
+          }
+        }
+
+        if (fullText) {
+          history.push({ role: 'assistant', content: fullText });
+        }
+      } catch (e) {
+        // Greeting failed silently — don't block the app
+        localStorage.removeItem('gk_last_greeting'); // Retry next load
+      }
+    }
+
+    // Init: load history first, then maybe greet
+    async function init() {
+      await loadHistory();
+      await maybeSendMorningGreeting();
+    }
+
+    init();
 
     // Auto-resize textarea
     inputEl.addEventListener('input', () => {
@@ -612,9 +718,15 @@
         // Remove typing indicator, set up response area
         typingMsg.remove();
 
-        let bubble = null;
+        let bubble    = null;
         let toolStrip = null;
-        let fullText = '';
+        let toolCount = 0;
+        let doneCount = 0;
+        let fullText  = '';
+        const allStrips = [];
+
+        // GateKeeper is working — fast pulse
+        document.body.classList.add('gk-working');
 
         const reader = resp.body.getReader();
         const decoder = new TextDecoder();
@@ -626,19 +738,34 @@
 
           buffer += decoder.decode(value, { stream: true });
           const lines = buffer.split('\n');
-          buffer = lines.pop(); // Keep incomplete line
+          buffer = lines.pop();
 
           for (const line of lines) {
             if (!line.startsWith('data: ')) continue;
             const data = line.slice(6).trim();
-            if (data === '[DONE]') break;
+            if (data === '[DONE]') {
+              // Collapse all tool strips to summary pills
+              for (const strip of allStrips) {
+                const total = parseInt(strip.dataset.total || 0);
+                const ok    = parseInt(strip.dataset.ok    || 0);
+                const fail  = total - ok;
+                const summary = strip.querySelector('.tool-summary');
+                if (summary) {
+                  const lbl = strip.dataset.lastLabel || `${total} action${total !== 1 ? 's' : ''}`;
+                  summary.innerHTML = fail > 0
+                    ? `⚡ ${lbl} · ❌ ${fail} failed — click to expand`
+                    : `⚡ ${lbl} — click to expand`;
+                }
+                setTimeout(() => strip.classList.add('collapsed'), 600);
+              }
+              break;
+            }
 
             try {
               const parsed = JSON.parse(data);
 
               if (parsed.type === 'tool_start') {
                 if (!toolStrip) {
-                  // Create tool activity strip inside a GK message
                   const msg = document.createElement('div');
                   msg.className = 'msg assistant';
                   const av = document.createElement('div');
@@ -646,24 +773,43 @@
                   av.innerHTML = `<img src="/assets/gatekeeper.svg" alt="GK"/>`;
                   toolStrip = document.createElement('div');
                   toolStrip.className = 'tool-strip';
+                  toolStrip.dataset.total = 0;
+                  toolStrip.dataset.ok    = 0;
+                  toolStrip.dataset.lastLabel = '';
+                  const summary = document.createElement('div');
+                  summary.className = 'tool-summary';
+                  toolStrip.appendChild(summary);
                   msg.appendChild(av);
                   msg.appendChild(toolStrip);
                   messagesEl.appendChild(msg);
+                  allStrips.push(toolStrip);
                 }
+                toolCount++;
+                toolStrip.dataset.total = toolCount;
+                toolStrip.dataset.lastLabel = parsed.label;
                 const ev = document.createElement('div');
                 ev.className = 'tool-event';
-                ev.id = `tool-${parsed.tool}`;
-                ev.innerHTML = `<div class="spinner"></div><span>⚙️ ${parsed.label}</span>`;
+                ev.id = `tool-${parsed.tool}-${toolCount}`;
+                ev.innerHTML = `<div class="spinner"></div><span>${parsed.label}</span>`;
                 toolStrip.appendChild(ev);
                 scrollBottom();
               }
 
               else if (parsed.type === 'tool_done') {
-                const ev = document.getElementById(`tool-${parsed.tool}`);
+                const evs = toolStrip
+                  ? [...toolStrip.querySelectorAll(`[id^="tool-${parsed.tool}-"]`)]
+                  : [];
+                const ev = evs[evs.length - 1];
                 if (ev) {
                   ev.className = 'tool-event done';
                   ev.innerHTML = `<span>${parsed.success ? '✅' : '❌'} ${parsed.summary}</span>`;
+                  if (parsed.success && toolStrip) {
+                    toolStrip.dataset.ok = parseInt(toolStrip.dataset.ok || 0) + 1;
+                  }
                 }
+                doneCount++;
+                toolStrip = null;
+                toolCount = 0;
                 scrollBottom();
               }
 
@@ -682,15 +828,22 @@
                 scrollBottom();
               }
 
-            } catch (e) {
-              // ignore parse errors on incomplete chunks
-            }
+            } catch (e) { /* ignore parse errors on incomplete chunks */ }
           }
+        }
+
+        // GateKeeper done — back to gentle breath
+        document.body.classList.remove('gk-working');
+
+        // Expand strip on click
+        for (const strip of allStrips) {
+          strip.addEventListener('click', () => strip.classList.toggle('collapsed'));
         }
 
         history.push({ role: 'assistant', content: fullText });
 
       } catch (err) {
+        document.body.classList.remove('gk-working');
         typingMsg.remove();
         addMessage('assistant', `❌ **Error:** ${err.message}\n\nMake sure your ANTHROPIC_API_KEY is set in your .env file and restart the server.`);
       }
@@ -704,7 +857,7 @@
     function renderMarkdown(text) {
       if (!text) return '';
       return text
-        // Code blocks
+        // Code blocks (protect from further processing)
         .replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang, code) =>
           `<pre><code>${escHtml(code.trim())}</code></pre>`)
         // Inline code
@@ -723,6 +876,12 @@
         .replace(/^\* (.+)$/gm, '<li>$1</li>')
         .replace(/^- (.+)$/gm, '<li>$1</li>')
         .replace(/^\d+\. (.+)$/gm, '<li>$1</li>')
+        // Markdown links [text](url)
+        .replace(/\[([^\]]+)\]\((https?:\/\/[^\)]+)\)/g,
+          '<a href="$2" target="_blank" rel="noopener" style="color:#38bdf8;text-decoration:underline;text-underline-offset:2px;">$1</a>')
+        // Bare URLs (http/https not already inside an href)
+        .replace(/(?<!href=")(https?:\/\/[^\s<>"')\]]+)/g,
+          '<a href="$1" target="_blank" rel="noopener" style="color:#38bdf8;text-decoration:underline;text-underline-offset:2px;">$1</a>')
         // Verdict badges
         .replace(/\bBLOCKED\b/g, '<span class="verdict-blocked">🔴 BLOCKED</span>')
         .replace(/\bWITH-CAUTION\b/g, '<span class="verdict-caution">🟡 WITH-CAUTION</span>')

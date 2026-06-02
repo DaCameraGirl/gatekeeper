@@ -6,6 +6,41 @@
 import { readFileSync } from 'fs';
 import { resolve } from 'path';
 
+// Environment parsing
+
+/** Read a string env var with blank values treated as unset. */
+export function envString(name, defaultValue = '') {
+  const value = process.env[name];
+  if (value === undefined || value === null || value.trim() === '') {
+    return defaultValue;
+  }
+  return stripMatchingQuotes(value.trim());
+}
+
+/** Read a boolean env var with support for common truthy/falsy spellings. */
+export function envBool(name, defaultValue = false) {
+  const value = envString(name, '');
+  if (value === '') return defaultValue;
+
+  const normalized = value.toLowerCase();
+  if (['1', 'true', 'yes', 'y', 'on'].includes(normalized)) return true;
+  if (['0', 'false', 'no', 'n', 'off'].includes(normalized)) return false;
+
+  throw new Error(
+    `GateKeeper: ${name} must be a boolean value (` +
+    'true/false, yes/no, on/off, or 1/0).'
+  );
+}
+
+function stripMatchingQuotes(value) {
+  if (value.length < 2) return value;
+  const first = value[0];
+  const last = value[value.length - 1];
+  return (first === last && (first === '"' || first === "'"))
+    ? value.slice(1, -1)
+    : value;
+}
+
 // ─── Flag Loading ──────────────────────────────────────────────────────────────
 
 /**

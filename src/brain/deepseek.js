@@ -38,15 +38,17 @@ export async function validateFlagsSchema(flags) {
 
   const client = getClient();
 
-  const prompt = `You are a DevOps configuration validator. Analyse this flags.json and identify:
-1. Missing required fields (release.feature, release.version, release.owner, flags.killSwitch, flags.rolloutPercentage, quality.testCoverage, quality.errorRatePercent, risk.blastRadius)
+  const prompt = `You are a DevOps configuration validator. Analyse this flags.json and identify ONLY real problems:
+1. Which of these required fields are actually missing: release.feature, release.version, release.owner, flags.killSwitch, flags.rolloutPercentage, quality.testCoverage, quality.errorRatePercent, risk.blastRadius
 2. Values that look suspicious or inconsistent (e.g., rollout 100% but no canary, dates in the past, negative values)
 3. Internal inconsistencies (e.g., kill switch true but feature enabled)
+
+CRITICAL: If a required field IS present, do NOT list it as missing. Only report genuine issues.
 
 Return ONLY a valid JSON object with exactly these fields:
 {
   "valid": true/false,
-  "issues": ["list of specific issues found, each as a short string"],
+  "issues": ["list of actual issues found — empty array if everything is fine"],
   "summary": "one sentence summary of the overall flags.json health"
 }
 

@@ -25,7 +25,7 @@ function getClient() {
   if (!apiKey) {
     throw new Error('GateKeeper: ANTHROPIC_API_KEY environment variable is not set.');
   }
-  return new Anthropic({ apiKey });
+  return new Anthropic({ apiKey, timeout: 60_000, maxRetries: 2 });
 }
 
 // ─── System Prompt ─────────────────────────────────────────────────────────────

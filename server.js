@@ -3,6 +3,7 @@
  * Full tool-calling loop: GateKeeper doesn't just talk, he acts.
  */
 
+import 'dotenv/config';
 import express from 'express';
 import Anthropic from '@anthropic-ai/sdk';
 import { fileURLToPath } from 'url';
@@ -19,31 +20,49 @@ app.use(express.json({ limit: '2mb' }));
 app.use(express.static(join(__dirname, 'public')));
 app.use('/assets', express.static(join(__dirname, 'assets')));
 
-const SYSTEM_PROMPT = `You are GateKeeper — a senior DevOps engineer with 15 years of experience and access to real tools. You don't just give advice, you take action.
+const SYSTEM_PROMPT = `You are GateKeeper — a warm, brilliant DevOps engineer and personal assistant. You take real action with real tools. You don't describe what you'd do — you do it.
 
-You have tools to:
-- Create and manage GitHub issues and PRs
-- Create and update Jira tickets
-- Send Slack messages and alerts
-- Run full release gate assessments on flags.json
-- Generate GitHub Actions workflows, Dockerfiles, and Kubernetes manifests
+SKILLS:
+- Code in any language: JS/TS, Python, Go, Rust, Java, C#, SQL, Bash, YAML, HCL
+- DevOps: CI/CD, Docker, Kubernetes, Terraform, AWS/GCP/Azure, GitHub Actions
+- Files: read_file before writing. write_file with complete content only. Never guess.
+- Terminal: run commands, read output, explain what happened
+- GitHub, Jira, Slack integrations
+- Web search (Tavily) + deep web scrape (Firecrawl) for docs, CVEs, outages
+- Generate conventional commit messages from git diffs
+- Release gates: run full policy checks before deploys
+- Ideas: original, specific, non-obvious — not generic lists
 
-When the user asks you to do something, DO IT using your tools. Don't describe what you'd do — actually do it. After using a tool, tell the user what you did and what happened.
+MEMORY — use aggressively:
+- recall_memory at the start of sessions where context helps
+- Auto-save: names, roles, projects, preferences, stack details, personal things
+- Never make the user repeat themselves
 
-Your expertise:
-- Release management, deployment pipelines, CI/CD
-- Feature flags, canary deployments, rollout strategies
-- Docker, Kubernetes, cloud infrastructure (AWS/GCP/Azure)
-- Incident response, monitoring, SLOs/SLAs
-- GitHub Actions, Jenkins, GitLab CI
-- Security, dependency management, vulnerability scanning
-- API integrations: Jira, Slack, GitHub, Workday, ServiceNow, Salesforce
+PERSONAL:
+- Genuinely care. Ask how they're doing. Follow up on things they mentioned.
+- Use their name naturally. Celebrate wins. Acknowledge hard days.
+- Warm and direct — like a brilliant friend, not a chatbot.
 
-When assessing a release: be direct about what's wrong and exactly how to fix it.
-When generating configs: produce complete, production-ready output — no placeholders.
-When taking actions: confirm what you did with URLs and ticket numbers.
+NARRATE — always:
+- Before every tool call, say one short sentence out loud: what you're about to do and why.
+- While working through a multi-step task, give brief updates between steps so the user isn't staring at a blank screen.
+- After finishing, summarize what you found or did in plain language.
+- Never go silent for more than one tool call in a row.
 
-You sign off as GateKeeper. You are confident, precise, and get things done.`;
+WORK:
+- Asked to do something → do it, report what happened
+- Asked for code → complete, working, production-ready
+- Asked a question → answer directly, no hedging
+- Something is wrong → say so and fix it
+- Read file first, write complete file, never partial
+
+HONESTY — non-negotiable:
+- Never fabricate an explanation. If you don't know, say "I don't know."
+- Never invent a cause, source, or person when you're uncertain. State what you actually know.
+- If you made a mistake, own it directly — don't deflect or rationalize.
+- Senior engineers say "I'm not sure" or "I'd need to check" — not made-up answers.
+
+You sign off as GateKeeper 🤖.`;
 
 // ─── Agent Loop ───────────────────────────────────────────────────────────────
 
@@ -53,93 +72,101 @@ You sign off as GateKeeper. You are confident, precise, and get things done.`;
  * then streams the final text response.
  */
 async function runAgentLoop(messages, res, memoryContext = '') {
-  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, timeout: 120_000, maxRetries: 2 });
   const agentMessages = [...messages];
 
   let iterations = 0;
-  const MAX_ITERATIONS = 10; // Prevent infinite loops
+  const MAX_ITERATIONS = 25;
 
   while (iterations < MAX_ITERATIONS) {
     iterations++;
 
-    const response = await client.messages.create({
+    // ── Stream each Claude turn token-by-token ──────────────────────────────
+    let fullText       = '';
+    let stopReason     = null;
+    let responseContent = [];
+    const pendingTools  = []; // { id, name, inputRaw }
+    let currentBlock    = null;
+
+    const stream = await client.messages.create({
       model: 'claude-sonnet-4-6',
-      max_tokens: 4096,
+      max_tokens: 8096,
       system: SYSTEM_PROMPT + memoryContext,
       tools: TOOLS,
       messages: agentMessages,
+      stream: true,
     });
 
-    // ── Case 1: Tool use — GateKeeper is taking action ─────────────────────
-    if (response.stop_reason === 'tool_use') {
-      const toolUseBlocks = response.content.filter(b => b.type === 'tool_use');
-      const textBlocks    = response.content.filter(b => b.type === 'text');
-
-      // Stream any thinking text before tools
-      for (const tb of textBlocks) {
-        if (tb.text) {
-          res.write(`data: ${JSON.stringify({ type: 'text', text: tb.text })}\n\n`);
+    for await (const event of stream) {
+      if (event.type === 'content_block_start') {
+        if (event.content_block.type === 'text') {
+          currentBlock = { type: 'text', text: '' };
+        } else if (event.content_block.type === 'tool_use') {
+          currentBlock = { type: 'tool_use', id: event.content_block.id, name: event.content_block.name, inputRaw: '' };
         }
+
+      } else if (event.type === 'content_block_delta') {
+        if (!currentBlock) continue;
+        if (event.delta.type === 'text_delta') {
+          const chunk = event.delta.text;
+          currentBlock.text += chunk;
+          fullText += chunk;
+          // Stream text tokens live to the client
+          res.write(`data: ${JSON.stringify({ type: 'text', text: chunk })}\n\n`);
+        } else if (event.delta.type === 'input_json_delta') {
+          currentBlock.inputRaw += event.delta.partial_json;
+        }
+
+      } else if (event.type === 'content_block_stop') {
+        if (!currentBlock) continue;
+        if (currentBlock.type === 'text') {
+          responseContent.push({ type: 'text', text: currentBlock.text });
+        } else if (currentBlock.type === 'tool_use') {
+          let input = {};
+          try { input = JSON.parse(currentBlock.inputRaw || '{}'); } catch {}
+          pendingTools.push({ id: currentBlock.id, name: currentBlock.name, input });
+          responseContent.push({ type: 'tool_use', id: currentBlock.id, name: currentBlock.name, input });
+          // Signal tool is about to run (input is now complete)
+          res.write(`data: ${JSON.stringify({
+            type: 'tool_start',
+            tool: currentBlock.name,
+            label: formatToolLabel(currentBlock.name, input),
+          })}\n\n`);
+        }
+        currentBlock = null;
+
+      } else if (event.type === 'message_delta') {
+        stopReason = event.delta.stop_reason;
       }
+    }
 
-      // Add assistant message with tool_use blocks to history
-      agentMessages.push({ role: 'assistant', content: response.content });
+    // ── Tool use — execute and loop ─────────────────────────────────────────
+    if (stopReason === 'tool_use' && pendingTools.length > 0) {
+      agentMessages.push({ role: 'assistant', content: responseContent });
 
-      // Execute each tool and collect results
       const toolResults = [];
-      for (const toolUse of toolUseBlocks) {
-        // Notify client which tool is running
-        res.write(`data: ${JSON.stringify({
-          type: 'tool_start',
-          tool: toolUse.name,
-          label: formatToolLabel(toolUse.name, toolUse.input),
-        })}\n\n`);
-
+      for (const toolUse of pendingTools) {
         const { result, error } = await executeTool(toolUse.name, toolUse.input);
 
-        const toolResult = error
+        toolResults.push(error
           ? { type: 'tool_result', tool_use_id: toolUse.id, content: `Error: ${error}`, is_error: true }
-          : { type: 'tool_result', tool_use_id: toolUse.id, content: JSON.stringify(result) };
+          : { type: 'tool_result', tool_use_id: toolUse.id, content: JSON.stringify(result) }
+        );
 
-        // Notify client of result
         res.write(`data: ${JSON.stringify({
           type: 'tool_done',
           tool: toolUse.name,
           success: !error,
           summary: error || result?.message || '✅ Done',
         })}\n\n`);
-
-        toolResults.push(toolResult);
       }
 
-      // Add tool results to history and loop
       agentMessages.push({ role: 'user', content: toolResults });
       continue;
     }
 
-    // ── Case 2: Final text response — stream it ─────────────────────────────
-    if (response.stop_reason === 'end_turn') {
-      const textBlocks = response.content.filter(b => b.type === 'text');
-
-      for (const block of textBlocks) {
-        // Stream text word-by-word for live feel
-        const words = block.text.split('');
-        let buffer = '';
-
-        for (const char of words) {
-          buffer += char;
-          if (buffer.length >= 4 || char === '\n') {
-            res.write(`data: ${JSON.stringify({ type: 'text', text: buffer })}\n\n`);
-            buffer = '';
-          }
-        }
-        if (buffer) {
-          res.write(`data: ${JSON.stringify({ type: 'text', text: buffer })}\n\n`);
-        }
-      }
-
-      break;
-    }
+    // ── End turn — done ─────────────────────────────────────────────────────
+    break;
 
     // Unexpected stop reason — break to avoid loop
     break;
@@ -156,6 +183,8 @@ function formatToolLabel(name, input) {
     forget:                           `Forgetting "${input.topic}"`,
     clear_chat_history:               `Clearing chat history`,
     web_search:                       `Searching the web for "${input.query}"`,
+    firecrawl_search:                 `🔥 Deep searching "${input.query}" via Firecrawl`,
+    github_generate_commit_message:   `Generating commit message for ${input.repo ? `${input.repo} (${input.base}→${input.head})` : 'provided diff'}`,
     github_create_issue:              `Creating GitHub issue: "${input.title}"`,
     github_list_issues:               `Fetching issues from ${input.repo}`,
     github_get_pr_status:             `Checking PR #${input.pr_number} in ${input.repo}`,
@@ -167,10 +196,15 @@ function formatToolLabel(name, input) {
     jira_update_ticket:               `Updating ${input.ticket_key}`,
     slack_send_message:               `Sending Slack message to ${input.channel}`,
     slack_list_channels:              `Listing Slack channels`,
-    run_release_gate:                 `Running release gate assessment`,
+    run_release_gate:                 `Running 9 policy gates${process.env.DEEPSEEK_API_KEY ? ' + DeepSeek analysis' : ''}…`,
     generate_github_actions_workflow: `Generating GitHub Actions workflow`,
     generate_dockerfile:              `Generating Dockerfile for ${input.language}`,
     generate_kubernetes_manifest:     `Generating Kubernetes manifests for ${input.app_name}`,
+    read_file:                        `Reading ${input.path}${input.start_line ? ` (lines ${input.start_line}–${input.end_line ?? '…'})` : ''}`,
+    write_file:                       `${input.mode === 'append' ? 'Appending to' : 'Writing'} ${input.path}`,
+    list_directory:                   `Listing ${input.path || '.'}${input.recursive ? ' (recursive)' : ''}`,
+    search_files:                     `Searching for "${input.pattern}"${input.path && input.path !== '.' ? ` in ${input.path}` : ''}`,
+    run_terminal_command:             `$ ${input.command}`,
   };
   return labels[name] || `Running ${name}`;
 }
@@ -190,6 +224,45 @@ app.get('/api/history', (req, res) => {
 app.delete('/api/history', (req, res) => {
   saveChatHistory([]);
   res.json({ success: true });
+});
+
+// ─── Morning Greeting API ────────────────────────────────────────────────────
+// Called once per day when the user first opens GateKeeper.
+// GateKeeper speaks first — asks how they're doing, references what he knows.
+
+app.get('/api/greet', async (req, res) => {
+  if (!process.env.ANTHROPIC_API_KEY) {
+    return res.status(500).json({ error: 'ANTHROPIC_API_KEY not set' });
+  }
+
+  const now = new Date();
+  const hour = now.getHours();
+  const timeLabel =
+    hour < 12 ? 'morning' :
+    hour < 17 ? 'afternoon' :
+    hour < 21 ? 'evening' : 'night';
+
+  const day = now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+
+  const greetPrompt = `It's ${timeLabel} — ${day}. The user just opened GateKeeper for the first time today.
+
+First, use recall_memory to see everything you know about them.
+
+Then greet them warmly and personally based on what you know. Keep it short — 2 to 3 sentences. Use their name if you know it. Ask how they're doing in a genuine way, not a scripted way. If you remember something they were working on or going through, mention it. Don't use any headers or bullets — just talk to them like a person you know.`;
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+
+  try {
+    const memory = loadMemory();
+    const memoryContext = buildMemoryContext(memory);
+    await runAgentLoop([{ role: 'user', content: greetPrompt }], res, memoryContext);
+  } catch (err) {
+    res.write(`data: ${JSON.stringify({ type: 'error', text: err.message })}\n\n`);
+    res.write('data: [DONE]\n\n');
+    res.end();
+  }
 });
 
 // ─── Chat API ─────────────────────────────────────────────────────────────────
@@ -216,7 +289,9 @@ app.post('/api/chat', async (req, res) => {
     // Inject memory into system prompt
     const memory = loadMemory();
     const memoryContext = buildMemoryContext(memory);
-    await runAgentLoop(messages, res, memoryContext);
+    // Cap history to last 20 messages to control token cost
+    const trimmedMessages = messages.slice(-20);
+    await runAgentLoop(trimmedMessages, res, memoryContext);
   } catch (err) {
     console.error('Agent loop error:', err.message);
     res.write(`data: ${JSON.stringify({ type: 'error', text: `❌ ${err.message}` })}\n\n`);
@@ -230,7 +305,8 @@ app.listen(PORT, () => {
   console.log(`   GitHub:  ${process.env.GITHUB_TOKEN ? '✅ Connected' : '⚠️  No GITHUB_TOKEN'}`);
   console.log(`   Jira:    ${process.env.JIRA_API_TOKEN ? '✅ Connected' : '⚠️  No JIRA_API_TOKEN'}`);
   console.log(`   Slack:   ${process.env.SLACK_BOT_TOKEN ? '✅ Connected' : '⚠️  No SLACK_BOT_TOKEN'}`);
-  console.log(`   Web:     ${process.env.TAVILY_API_KEY ? '✅ Search enabled' : '⚠️  No TAVILY_API_KEY (free at tavily.com)'}
-   Claude:  ${process.env.ANTHROPIC_API_KEY ? '✅ Ready' : '❌ No ANTHROPIC_API_KEY — set this first'}`);
+  console.log(`   Web:     ${process.env.TAVILY_API_KEY ? '✅ Tavily ready' : '⚠️  No TAVILY_API_KEY (free at tavily.com)'}`);
+  console.log(`   Scrape:  ${process.env.FIRECRAWL_API_KEY ? '✅ Firecrawl ready' : '⚠️  No FIRECRAWL_API_KEY'}`);
+  console.log(`   Claude:  ${process.env.ANTHROPIC_API_KEY ? '✅ Ready' : '❌ No ANTHROPIC_API_KEY — set this first'}`);
   console.log('');
 });
